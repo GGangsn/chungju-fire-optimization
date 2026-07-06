@@ -151,16 +151,51 @@ def minmax(values):
     return [(value - low) / (high - low) for value in values]
 
 
+# 실제 소방서 및 병원 좌표 정보 (거리 계산용)
+FIRE_STATIONS = [
+    (36.9818, 127.9333), # 충주소방서
+    (36.9739, 127.8015), # 주덕119
+    (36.8407, 127.9944), # 수안보119
+    (37.1471, 127.7656), # 앙성119
+    (36.9892, 127.9392), # 연수119
+    (37.0163, 127.8631)  # 중앙탑119
+]
+
+HOSPITALS = [
+    (36.9767, 127.9272), # 건국대병원
+    (36.9634, 127.9620), # 충주의료원
+    (36.9678, 127.9295)  # 세명대한방병원
+]
+
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371.0 # 지구 반지름 (km)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
+
+
 def add_cluster_and_risk(rows, cluster_count):
-    features = [[row["elderly"], row["elderly_ratio"]] for row in rows]
+    # 각 지역별 최단 소방서 및 병원 거리 계산
+    for row in rows:
+        row["dist_fire"] = min(haversine(row["lat"], row["lng"], f[0], f[1]) for f in FIRE_STATIONS)
+        row["dist_hosp"] = min(haversine(row["lat"], row["lng"], h[0], h[1]) for h in HOSPITALS)
+
+    # 3차원 피처 추출: 고령자 인구수, 최단 소방서 거리, 최단 병원 거리
+    features = [[row["elderly"], row["dist_fire"], row["dist_hosp"]] for row in rows]
     labels = kmeans(standardize(features), cluster_count)
 
     elderly_scaled = minmax([row["elderly"] for row in rows])
-    ratio_scaled = minmax([row["elderly_ratio"] for row in rows])
+    fire_scaled = minmax([row["dist_fire"] for row in rows])
+    hosp_scaled = minmax([row["dist_hosp"] for row in rows])
 
-    for row, label, elderly_score, ratio_score in zip(rows, labels, elderly_scaled, ratio_scaled):
+    # 위험점수 = 고령인구 가중치 40% + 소방서 접근성 30% + 병원 접근성 30%
+    # 거리가 멀수록(MinMax 변환값이 클수록) 접근성이 취약하므로 위험점수가 올라갑니다.
+    for row, label, elderly_score, fire_score, hosp_score in zip(rows, labels, elderly_scaled, fire_scaled, hosp_scaled):
         row["cluster"] = label
-        row["risk_score"] = (elderly_score + ratio_score) / 2
+        row["risk_score"] = (elderly_score * 0.4) + (fire_score * 0.3) + (hosp_score * 0.3)
 
     cluster_scores = {}
     for label in sorted(set(labels)):
@@ -197,13 +232,17 @@ def print_summary(rows):
         members = [row for row in rows if row["cluster"] == cluster]
         avg_elderly = sum(row["elderly"] for row in members) / len(members)
         avg_ratio = sum(row["elderly_ratio"] for row in members) / len(members)
+        avg_fire = sum(row["dist_fire"] for row in members) / len(members)
+        avg_hosp = sum(row["dist_hosp"] for row in members) / len(members)
         avg_score = sum(row["risk_score"] for row in members) / len(members)
         rank = members[0]["risk_rank"]
         print(
             f"군집 {cluster} / {risk_label(rank)}: "
             f"지역 {len(members)}개, "
             f"65세 이상 평균 {avg_elderly:.1f}명, "
-            f"고령인구 비율 평균 {avg_ratio:.1f}%, "
+            f"고령비율 평균 {avg_ratio:.1f}%, "
+            f"최단 소방서 거리 평균 {avg_fire:.2f}km, "
+            f"최단 병원 거리 평균 {avg_hosp:.2f}km, "
             f"위험점수 {avg_score:.3f}"
         )
 
@@ -364,19 +403,27 @@ def build_html(rows, geojson_data, search_radius_m):
       console.error("Turf union failed:", e);
     }}
 
-    // 🚑 실제 소방서 및 병원 마커 추가
+    // 🚑 실제 소방서 및 병원 마커 추가 (이모지 대신 전문 SVG 벡터 기호로 교체)
     const fireStationIcon = L.divIcon({{
-      html: '<div style="background-color: #d32f2f; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2.2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35); font-weight: bold; cursor: pointer;">🚒</div>',
-      className: 'custom-div-icon',
-      iconSize: [24, 24],
-      iconAnchor: [12, 12]
+      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="30" height="30" style="filter: drop-shadow(0px 2.5px 4px rgba(0,0,0,0.4));">
+               <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#d32f2f"/>
+               <circle cx="12" cy="9" r="4.5" fill="white"/>
+               <path d="M12 6.5c-0.7 1.1-1.3 1.8-1.3 2.7a1.3 1.3 0 0 0 2.6 0c0-0.9-0.6-1.6-1.3-2.7z" fill="#d32f2f"/>
+             </svg>`,
+      className: 'custom-svg-icon',
+      iconSize: [30, 30],
+      iconAnchor: [15, 30]
     }});
 
     const hospitalIcon = L.divIcon({{
-      html: '<div style="background-color: #1976d2; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2.2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35); font-weight: bold; cursor: pointer;">🏥</div>',
-      className: 'custom-div-icon',
-      iconSize: [24, 24],
-      iconAnchor: [12, 12]
+      html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="30" height="30" style="filter: drop-shadow(0px 2.5px 4px rgba(0,0,0,0.4));">
+               <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#1976d2"/>
+               <circle cx="12" cy="9" r="4.5" fill="white"/>
+               <path d="M10.2 9h3.6M12 7.2v3.6" stroke="#1976d2" stroke-width="2.2" stroke-linecap="round"/>
+             </svg>`,
+      className: 'custom-svg-icon',
+      iconSize: [30, 30],
+      iconAnchor: [15, 30]
     }});
 
     const realFireStations = [
@@ -455,6 +502,21 @@ def build_html(rows, geojson_data, search_radius_m):
     }}
 
     function onMapClick(e) {{
+      // Turf.js를 사용하여 클릭 지점이 충주시 관내(25개 행정구역 폴리곤) 내부에 위치하는지 검사
+      const clickPoint = turf.point([e.latlng.lng, e.latlng.lat]);
+      let isInsideChungju = false;
+      
+      geojsonData.features.forEach((feature) => {{
+        if (turf.booleanPointInPolygon(clickPoint, feature)) {{
+          isInsideChungju = true;
+        }}
+      }});
+      
+      if (!isInsideChungju) {{
+        alert("🚨 가상 119안전센터는 충주시 관내(행정구역 안)에만 설립할 수 있습니다!");
+        return;
+      }}
+
       if (selectedPin && e.latlng.distanceTo(selectedPin.getLatLng()) < 500) {{
         clearRiskSelection();
         return;
