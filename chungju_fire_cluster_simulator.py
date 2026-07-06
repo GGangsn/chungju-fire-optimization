@@ -177,36 +177,35 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * c
 
 
-def add_cluster_and_risk(rows, cluster_count):
-    # 각 지역별 최단 소방서 및 병원 거리 계산
+def add_cluster_and_risk(rows, cluster_count=3):
+    # 실제 소방서 및 병원 최단 거리는 시각화용 데이터로 여전히 계산해서 주입해 둡니다.
     for row in rows:
         row["dist_fire"] = min(haversine(row["lat"], row["lng"], f[0], f[1]) for f in FIRE_STATIONS)
         row["dist_hosp"] = min(haversine(row["lat"], row["lng"], h[0], h[1]) for h in HOSPITALS)
 
-    # 3차원 피처 추출: 고령자 인구수, 최단 소방서 거리, 최단 병원 거리
-    features = [[row["elderly"], row["dist_fire"], row["dist_hosp"]] for row in rows]
-    labels = kmeans(standardize(features), cluster_count)
-
+    # 지표 1 & 2 최소-최대 정규화 (Min-Max Scaling)
     elderly_scaled = minmax([row["elderly"] for row in rows])
-    fire_scaled = minmax([row["dist_fire"] for row in rows])
-    hosp_scaled = minmax([row["dist_hosp"] for row in rows])
+    ratio_scaled = minmax([row["elderly_ratio"] for row in rows])
 
-    # 위험점수 = 고령인구 가중치 40% + 소방서 접근성 30% + 병원 접근성 30%
-    # 거리가 멀수록(MinMax 변환값이 클수록) 접근성이 취약하므로 위험점수가 올라갑니다.
-    for row, label, elderly_score, fire_score, hosp_score in zip(rows, labels, elderly_scaled, fire_scaled, hosp_scaled):
-        row["cluster"] = label
-        row["risk_score"] = (elderly_score * 0.4) + (fire_score * 0.3) + (hosp_score * 0.3)
+    for row, elderly_score, ratio_score in zip(rows, elderly_scaled, ratio_scaled):
+        # 최종 위험도 점수 = (인구수 점수 + 비율 점수) / 2
+        row["risk_score"] = (elderly_score + ratio_score) / 2
 
-    cluster_scores = {}
-    for label in sorted(set(labels)):
-        members = [row for row in rows if row["cluster"] == label]
-        cluster_scores[label] = sum(row["risk_score"] for row in members) / len(members)
-
-    sorted_clusters = sorted(cluster_scores, key=cluster_scores.get, reverse=True)
-    rank_by_cluster = {cluster: rank for rank, cluster in enumerate(sorted_clusters)}
-    for row in rows:
-        row["risk_rank"] = rank_by_cluster[row["cluster"]]
-    return rows
+    # 위험도 점수 기준 내림차순 정렬
+    sorted_rows = sorted(rows, key=lambda x: x["risk_score"], reverse=True)
+    
+    # 25개 구역을 정확히 3등분 (상위 9개: 고위험, 중위 8개: 중위험, 하위 8개: 저위험)
+    for i, row in enumerate(sorted_rows):
+        if i < 9:
+            row["risk_rank"] = 0
+            row["cluster"] = 0
+        elif i < 17:
+            row["risk_rank"] = 1
+            row["cluster"] = 1
+        else:
+            row["risk_rank"] = 2
+            row["cluster"] = 2
+    return sorted_rows
 
 
 def risk_label(rank):
@@ -269,6 +268,8 @@ def build_html(rows, geojson_data, search_radius_m):
             feature["properties"]["color"] = risk_color(row["risk_rank"])
             feature["properties"]["center_lat"] = row["lat"]
             feature["properties"]["center_lng"] = row["lng"]
+            feature["properties"]["dist_fire"] = row["dist_fire"]
+            feature["properties"]["dist_hosp"] = row["dist_hosp"]
             features_to_keep.append(feature)
 
     # 매칭된 충주시 피처들만 포함하는 GeoJSON
@@ -371,9 +372,14 @@ def build_html(rows, geojson_data, search_radius_m):
         }};
       }},
       onEachFeature: function(feature, layer) {{
-        layer.bindTooltip(`<b>${{feature.properties.name}}</b> (${{feature.properties.label}})`, {{
-          sticky: true
-        }});
+        const props = feature.properties;
+        layer.bindTooltip(
+          `<b>${{props.name}}</b> (${{props.label}})<br>` +
+          `• 65세 이상 인구: ${{props.elderly.toLocaleString()}}명 (${{props.elderly_ratio.toFixed(1)}}%)<br>` +
+          `• 🚒 최단 소방서 거리: ${{props.dist_fire.toFixed(2)}}km<br>` +
+          `• 🏥 최단 병원 거리: ${{props.dist_hosp.toFixed(2)}}km`,
+          {{ sticky: true }}
+        );
         
         // 폴리곤 클릭 시 가상 119 안전센터 핀을 올바르게 설치하도록 맵 이벤트와 연동
         layer.on("click", function(e) {{
