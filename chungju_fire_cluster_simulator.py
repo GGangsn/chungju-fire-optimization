@@ -709,9 +709,6 @@ def main():
     raw_rows = read_csv_rows(csv_path)
     rows = prepare_rows(raw_rows)
 
-    # [요청 반영] 읍·면을 제외하고 오직 '동' 단위(도심동)들만 분석 대상으로 한정
-    rows = [row for row in rows if row["name"].endswith("동")]
-
     # 2. K-Means 알고리즘 및 위험 지수 평가 적용
     rows = add_cluster_and_risk(rows, args.clusters)
     print_summary(rows)
