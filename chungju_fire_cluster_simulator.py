@@ -178,18 +178,21 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def add_cluster_and_risk(rows, cluster_count=3):
-    # 실제 소방서 및 병원 최단 거리는 시각화용 데이터로 여전히 계산해서 주입해 둡니다.
+    # 실제 소방서 및 병원 최단 거리 계산
     for row in rows:
         row["dist_fire"] = min(haversine(row["lat"], row["lng"], f[0], f[1]) for f in FIRE_STATIONS)
         row["dist_hosp"] = min(haversine(row["lat"], row["lng"], h[0], h[1]) for h in HOSPITALS)
 
-    # 지표 1 & 2 최소-최대 정규화 (Min-Max Scaling)
+    # 4대 지표 최소-최대 정규화 (Min-Max Scaling)
     elderly_scaled = minmax([row["elderly"] for row in rows])
     ratio_scaled = minmax([row["elderly_ratio"] for row in rows])
+    fire_scaled = minmax([row["dist_fire"] for row in rows])
+    hosp_scaled = minmax([row["dist_hosp"] for row in rows])
 
-    for row, elderly_score, ratio_score in zip(rows, elderly_scaled, ratio_scaled):
-        # 최종 위험도 점수 = (인구수 점수 + 비율 점수) / 2
-        row["risk_score"] = (elderly_score + ratio_score) / 2
+    for row, e_score, r_score, f_score, h_score in zip(rows, elderly_scaled, ratio_scaled, fire_scaled, hosp_scaled):
+        # 최종 위험도 점수 = (고령자수 점수 + 고령비율 점수 + 소방서 최단거리 점수 + 병원 최단거리 점수) / 4
+        # 인프라 거리가 멀수록(MinMax 환산값이 클수록) 골든타임 사각지대이므로 점수가 커집니다.
+        row["risk_score"] = (e_score + r_score + f_score + h_score) / 4
 
     # 위험도 점수 기준 내림차순 정렬
     sorted_rows = sorted(rows, key=lambda x: x["risk_score"], reverse=True)
