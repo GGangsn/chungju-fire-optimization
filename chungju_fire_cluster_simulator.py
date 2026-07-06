@@ -33,6 +33,10 @@ REGION_COORDS = {
 }
 
 
+def clean_name(name):
+    return name.replace("·", "").replace(" ", "").replace("-", "").strip()
+
+
 def parse_number(value):
     return float(str(value).replace(",", "").strip())
 
@@ -57,11 +61,15 @@ def prepare_rows(raw_rows):
     if missing:
         raise KeyError(f"필수 컬럼이 없습니다: {', '.join(sorted(missing))}")
 
+    # 좌표 매핑 사전의 키들도 정제하여 검색 속도 향상
+    clean_coords = {clean_name(k): v for k, v in REGION_COORDS.items()}
+
     rows = []
     missing_coords = []
     for raw in raw_rows:
         name = raw["구분"].strip()
-        coords = REGION_COORDS.get(name)
+        clean_key = clean_name(name)
+        coords = clean_coords.get(clean_key)
         if coords is None:
             missing_coords.append(name)
             continue
@@ -204,15 +212,16 @@ def build_html(rows, geojson_data, search_radius_m):
     center_lat = sum(row["lat"] for row in rows) / len(rows)
     center_lng = sum(row["lng"] for row in rows) / len(rows)
     
-    # rows 데이터를 name 기준으로 조회하기 쉽게 딕셔너리로 변환
-    rows_by_name = {row["name"]: row for row in rows}
+    # rows 데이터를 정제된 이름을 기준으로 딕셔너리 변환
+    rows_by_clean_name = {clean_name(row["name"]): row for row in rows}
 
     # GeoJSON 피처들에 위험 분석 정보 추가
     features_to_keep = []
     for feature in geojson_data.get("features", []):
         name = feature["properties"]["name"]
-        if name in rows_by_name:
-            row = rows_by_name[name]
+        clean_feature_name = clean_name(name)
+        if clean_feature_name in rows_by_clean_name:
+            row = rows_by_clean_name[clean_feature_name]
             feature["properties"]["elderly"] = int(row["elderly"])
             feature["properties"]["elderly_ratio"] = row["elderly_ratio"]
             feature["properties"]["risk_score"] = row["risk_score"]
@@ -288,7 +297,8 @@ def build_html(rows, geojson_data, search_radius_m):
     <span class="dot" style="background:#f9a825"></span>중위험군 (반투명)<br>
     <span class="dot" style="background:#2e7d32"></span>저위험군 (반투명)<br>
     <div class="info-box">
-      • 지도 클릭: 주변 2km 내 지역 강조 (실시간 변경)<br>
+      • 지도 클릭: <b>가상 소방안전센터</b> 핀 설치<br>
+      • 설치 시 주변 위험 등급 실시간 완화(안전성 시뮬레이션)<br>
       • 더블클릭/빈곳 재클릭: 필터 초기화
     </div>
   </div>
@@ -367,6 +377,24 @@ def build_html(rows, geojson_data, search_radius_m):
       }}).addTo(map);
     }});
 
+    // 가상 안전센터 거리별 안전도 완화 색상 계산 함수
+    function getSafetyColor(originalRank, distance) {{
+      let currentRank = originalRank; // 0:고위험, 1:중위험, 2:저위험
+      
+      if (distance <= 2000) {{
+        // 반경 2.0km 이내 (최고 혜택): 위험도를 2단계 낮춤 -> 무조건 저위험(안전 - 초록)으로 변경
+        currentRank = 2;
+      }} else if (distance <= 4000) {{
+        // 반경 2.0km 초과 ~ 4.0km 이하 (보통 혜택): 위험도를 1단계 완화
+        currentRank = Math.min(2, originalRank + 1); // 고(0)->중(1), 중(1)->저(2), 저(2)->저(2)
+      }}
+      
+      // 색상 코드 반환
+      if (currentRank === 0) return "#d32f2f"; // 빨강
+      if (currentRank === 1) return "#f9a825"; // 노랑
+      return "#2e7d32";                         // 초록
+    }}
+
     function clearRiskSelection() {{
       if (selectedPin) map.removeLayer(selectedPin);
       if (selectedRadius) map.removeLayer(selectedRadius);
@@ -387,7 +415,6 @@ def build_html(rows, geojson_data, search_radius_m):
     }}
 
     function onMapClick(e) {{
-      // 이미 핀이 꽂혀 있는 경우, 지도의 다른 지점을 클릭하면 지우고 새로 생성 (더블클릭처럼 사용 가능)
       if (selectedPin && e.latlng.distanceTo(selectedPin.getLatLng()) < 500) {{
         clearRiskSelection();
         return;
@@ -395,6 +422,7 @@ def build_html(rows, geojson_data, search_radius_m):
       
       clearRiskSelection();
 
+      // 파란색 핀 = 가상 119 안전센터 설치
       selectedPin = L.marker(e.latlng).addTo(map);
       
       // 검색 반경 2.0km를 연한 빨간색 점선으로 강조
@@ -404,12 +432,13 @@ def build_html(rows, geojson_data, search_radius_m):
         weight: 1.2,
         dashArray: "4, 4",
         fillColor: "#ef5350",
-        fillOpacity: 0.04,
+        fillOpacity: 0.03,
         interactive: false
       }}).addTo(map);
 
       const includedHighRisk = [];
       const includedAll = [];
+      const alleviatedList = []; // 안전도가 완화된 구역 리스트
 
       // 실시간으로 각 행정구역 폴리곤 스타일 변경
       geojsonLayer.eachLayer((layer) => {{
@@ -417,40 +446,57 @@ def build_html(rows, geojson_data, search_radius_m):
         const centerLatLng = L.latLng(props.center_lat, props.center_lng);
         const distance = e.latlng.distanceTo(centerLatLng);
 
+        // 가상 안전센터와의 거리에 따른 새로운 등급 색상 적용
+        const newColor = getSafetyColor(props.risk_rank, distance);
+        const isAlleviated = (props.risk_rank === 0 && newColor !== "#d32f2f") || (props.risk_rank === 1 && newColor === "#2e7d32");
+
         if (distance <= searchRadiusMeters) {{
-          // 반경 내 지역: 위험군별 색상을 아주 선명하고 두껍게 강조
+          // 반경 내 지역: 고채도 강조 렌더링
           layer.setStyle({{
-            fillOpacity: 0.60,
-            weight: 3.0,
-            opacity: 0.9
+            fillColor: newColor,
+            fillOpacity: 0.65,
+            color: newColor,
+            weight: 3.5,
+            opacity: 0.95
           }});
           
           includedAll.push(props.name);
           if (props.risk_rank === 0) {{
             includedHighRisk.push(props.name);
           }}
+          if (isAlleviated) {{
+            alleviatedList.push(`${{props.name}}`);
+          }}
         }} else {{
-          // 반경 외 지역: 페이드아웃 (투명하고 연하게 처리하여 대비 효과 극대화)
+          // 반경 외 지역: 2~4km 범위면 색상 변경은 반영하되 약간 반투명하게, 4km 초과는 거의 투명하게 처리
+          const isSubSafe = distance <= 4000;
           layer.setStyle({{
-            fillOpacity: 0.04,
-            weight: 0.6,
-            opacity: 0.12
+            fillColor: newColor,
+            fillOpacity: isSubSafe ? 0.20 : 0.04,
+            color: newColor,
+            weight: isSubSafe ? 1.5 : 0.6,
+            opacity: isSubSafe ? 0.4 : 0.12
           }});
+          
+          if (isSubSafe && isAlleviated) {{
+            alleviatedList.push(`${{props.name}}`);
+          }}
         }}
       }});
 
       // 핀에 팝업 정보 바인딩 및 오픈
-      let popupContent = `<b>선택 지점</b><br>반경 2.0km 내 분석 결과:<br>`;
+      let popupContent = `<b>🚒 가상 119안전센터 설립 후보지</b><br><br>`;
       if (includedAll.length > 0) {{
-        popupContent += `• 대상 지역: ${{includedAll.join(", ")}}<br>`;
-        if (includedHighRisk.length > 0) {{
-          popupContent += `<span style="color:#d32f2f;">• <b>고위험군 포함</b>: ${{includedHighRisk.join(", ")}}</span>`;
-        }} else {{
-          popupContent += `<span style="color:#2e7d32;">• 고위험군 없음</span>`;
-        }}
+        popupContent += `• <b>2.0km 내 대응 구역:</b> ${{includedAll.join(", ")}}<br>`;
       }} else {{
-        popupContent += `반경 내 포함되는 행정구역 중심점 없음.`;
+        popupContent += `• 2km 내 인접 행정구역 중심점 없음.<br>`;
       }}
+
+      if (alleviatedList.length > 0) {{
+        popupContent += `<span style="color:#2e7d32;">• <b>안전 등급 개선 지역:</b> ${{alleviatedList.join(", ")}}</span><br>`;
+      }}
+      
+      popupContent += `<br><span style="color:#1565c0;">• 핀 주변 지역의 소방 도착 골든타임이 단축되어 위험도가 완화되었습니다!</span>`;
 
       selectedPin.bindPopup(popupContent).openPopup();
     }}
