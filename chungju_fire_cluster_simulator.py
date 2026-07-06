@@ -261,7 +261,7 @@ def build_html(rows, geojson_data, search_radius_m):
     # rows 데이터를 정제된 이름을 기준으로 딕셔너리 변환
     rows_by_clean_name = {clean_name(row["name"]): row for row in rows}
 
-    # GeoJSON 피처들에 위험 분석 정보 추가 (읍면 지역은 회색 배경 처리)
+    # GeoJSON 피처들에 위험 분석 정보 추가 (25개 읍·면·동 전체 대상)
     features_to_keep = []
     for feature in geojson_data.get("features", []):
         name = feature["properties"]["name"]
@@ -278,19 +278,19 @@ def build_html(rows, geojson_data, search_radius_m):
             feature["properties"]["center_lng"] = row["lng"]
             feature["properties"]["dist_fire"] = row["dist_fire"]
             feature["properties"]["dist_hosp"] = row["dist_hosp"]
-            feature["properties"]["is_dong"] = True
+            feature["properties"]["is_chungju"] = True
         else:
             feature["properties"]["elderly"] = 0
             feature["properties"]["elderly_ratio"] = 0.0
             feature["properties"]["risk_score"] = 0.0
             feature["properties"]["risk_rank"] = -1
-            feature["properties"]["label"] = "분석 제외 (읍·면 지역)"
-            feature["properties"]["color"] = "#e0e0e0" # 연한 회색 배경
+            feature["properties"]["label"] = "분석 제외 구역"
+            feature["properties"]["color"] = "#e0e0e0" 
             feature["properties"]["center_lat"] = 0.0
             feature["properties"]["center_lng"] = 0.0
             feature["properties"]["dist_fire"] = 0.0
             feature["properties"]["dist_hosp"] = 0.0
-            feature["properties"]["is_dong"] = False
+            feature["properties"]["is_chungju"] = False
         features_to_keep.append(feature)
 
     # 매칭된 충주시 피처들만 포함하는 GeoJSON
@@ -385,7 +385,7 @@ def build_html(rows, geojson_data, search_radius_m):
     geojsonLayer = L.geoJSON(geojsonData, {{
       style: function(feature) {{
         const props = feature.properties;
-        if (!props.is_dong) {{
+        if (!props.is_chungju) {{
           return {{
             fillColor: "#e0e0e0",
             fillOpacity: 0.15,
@@ -404,8 +404,8 @@ def build_html(rows, geojson_data, search_radius_m):
       }},
       onEachFeature: function(feature, layer) {{
         const props = feature.properties;
-        if (!props.is_dong) {{
-          layer.bindTooltip(`<b>${{props.name}}</b> (분석 제외 - 읍·면 지역)`, {{ sticky: true }});
+        if (!props.is_chungju) {{
+          layer.bindTooltip(`<b>${{props.name}}</b> (분석 제외 구역)`, {{ sticky: true }});
           return;
         }}
         
@@ -533,7 +533,7 @@ def build_html(rows, geojson_data, search_radius_m):
       // 모든 폴리곤의 스타일을 원래의 반투명 상태로 복구
       geojsonLayer.eachLayer((layer) => {{
         const props = layer.feature.properties;
-        if (!props.is_dong) {{
+        if (!props.is_chungju) {{
           layer.setStyle({{
             fillColor: "#e0e0e0",
             fillOpacity: 0.15,
@@ -555,18 +555,18 @@ def build_html(rows, geojson_data, search_radius_m):
     }}
 
     function onMapClick(e) {{
-      // Turf.js를 사용하여 클릭 지점이 충주시 도심 '동(洞)' 지역 내부에 위치하는지 검사
+      // Turf.js를 사용하여 클릭 지점이 충주시 관내(25개 행정구역 폴리곤) 내부에 위치하는지 검사
       const clickPoint = turf.point([e.latlng.lng, e.latlng.lat]);
-      let isInsideDong = false;
+      let isInsideChungju = false;
       
       geojsonData.features.forEach((feature) => {{
-        if (feature.properties.is_dong && turf.booleanPointInPolygon(clickPoint, feature)) {{
-          isInsideDong = true;
+        if (feature.properties.is_chungju && turf.booleanPointInPolygon(clickPoint, feature)) {{
+          isInsideChungju = true;
         }}
       }});
       
-      if (!isInsideDong) {{
-        alert("🚨 가상 119안전센터는 분석 대상인 충주 도심 '동(洞)' 지역 내에만 설립할 수 있습니다!");
+      if (!isInsideChungju) {{
+        alert("🚨 가상 119안전센터는 충주시 관내(행정구역 안)에만 설립할 수 있습니다!");
         return;
       }}
 
@@ -599,8 +599,8 @@ def build_html(rows, geojson_data, search_radius_m):
       geojsonLayer.eachLayer((layer) => {{
         const props = layer.feature.properties;
         
-        // 읍면 지역은 시뮬레이션 영향에서 완전히 제외하여 회색 배경 상시 유지
-        if (!props.is_dong) {{
+        // 매칭되지 않은 임의의 지역은 시뮬레이션 영향에서 제외
+        if (!props.is_chungju) {{
           layer.setStyle({{
             fillColor: "#e0e0e0",
             fillOpacity: 0.15,
