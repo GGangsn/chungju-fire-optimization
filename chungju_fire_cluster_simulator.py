@@ -37,6 +37,79 @@ def clean_name(name):
     return name.replace("·", "").replace(" ", "").replace("-", "").strip()
 
 
+def split_feature_geom(feature, n_splits=4):
+    props = feature["properties"]
+    geom = feature["geometry"]
+    name = props["name"]
+    center_lat = props["center_lat"]
+    center_lng = props["center_lng"]
+    
+    geom_type = geom["type"]
+    sub_features = []
+    
+    angle_step = (2 * math.pi) / n_splits
+    sectors = [[] for _ in range(n_splits)]
+    
+    if geom_type == "Polygon":
+        rings = geom["coordinates"]
+    elif geom_type == "MultiPolygon":
+        rings = []
+        for poly in geom["coordinates"]:
+            rings.extend(poly)
+    else:
+        return [feature]
+        
+    for ring in rings:
+        for pt in ring[:-1]:
+            lng, lat = pt[0], pt[1]
+            angle = math.atan2(lat - center_lat, lng - center_lng)
+            if angle < 0:
+                angle += 2 * math.pi
+            sector_idx = int(angle // angle_step)
+            if sector_idx >= n_splits:
+                sector_idx = n_splits - 1
+            sectors[sector_idx].append(pt)
+            
+    for idx, pts in enumerate(sectors):
+        if len(pts) < 3:
+            continue
+            
+        pts_with_angle = []
+        for pt in pts:
+            angle = math.atan2(pt[1] - center_lat, pt[0] - center_lng)
+            if angle < 0:
+                angle += 2 * math.pi
+            pts_with_angle.append((angle, pt))
+        pts_with_angle.sort(key=lambda x: x[0])
+        sorted_pts = [p[1] for p in pts_with_angle]
+        
+        sub_ring = [[center_lng, center_lat]] + sorted_pts + [[center_lng, center_lat]]
+        
+        sub_feature = {
+            "type": "Feature",
+            "properties": props.copy(),
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [sub_ring]
+            }
+        }
+        
+        sub_feature["properties"]["name"] = f"{name} {idx+1}리"
+        
+        # 가상 중심점 계산
+        sub_center_lng = sum(p[0] for p in sorted_pts) / len(sorted_pts)
+        sub_center_lat = sum(p[1] for p in sorted_pts) / len(sorted_pts)
+        sub_feature["properties"]["center_lat"] = sub_center_lat
+        sub_feature["properties"]["center_lng"] = sub_center_lng
+        
+        sub_features.append(sub_feature)
+        
+    if not sub_features:
+        return [feature]
+        
+    return sub_features
+
+
 def parse_number(value):
     return float(str(value).replace(",", "").strip())
 
@@ -268,6 +341,8 @@ def build_html(rows, geojson_data, search_radius_m):
         clean_feature_name = clean_name(name)
         if clean_feature_name in rows_by_clean_name:
             row = rows_by_clean_name[clean_feature_name]
+            
+            # 공통 프로퍼티 세팅
             feature["properties"]["elderly"] = int(row["elderly"])
             feature["properties"]["elderly_ratio"] = row["elderly_ratio"]
             feature["properties"]["risk_score"] = row["risk_score"]
@@ -279,6 +354,24 @@ def build_html(rows, geojson_data, search_radius_m):
             feature["properties"]["dist_fire"] = row["dist_fire"]
             feature["properties"]["dist_hosp"] = row["dist_hosp"]
             feature["properties"]["is_chungju"] = True
+            
+            # [요청 반영] 읍·면 지역(이름이 '동'으로 끝나지 않는 구역)은 4분할하여 가상 '리' 단위로 쪼개기
+            if not clean_feature_name.endswith("동"):
+                sub_features = split_feature_geom(feature, n_splits=4)
+                for sub_feat in sub_features:
+                    n = len(sub_features)
+                    # 고령인구 분할
+                    sub_feat["properties"]["elderly"] = int(row["elderly"] / n)
+                    
+                    # 쪼개진 중심점 기준 소방서/병원 최단 거리 정밀 재산출
+                    sub_lat = sub_feat["properties"]["center_lat"]
+                    sub_lng = sub_feat["properties"]["center_lng"]
+                    sub_feat["properties"]["dist_fire"] = min(haversine(sub_lat, sub_lng, f[0], f[1]) for f in FIRE_STATIONS)
+                    sub_feat["properties"]["dist_hosp"] = min(haversine(sub_lat, sub_lng, h[0], h[1]) for h in HOSPITALS)
+                    
+                    features_to_keep.append(sub_feat)
+            else:
+                features_to_keep.append(feature)
         else:
             print(f"⚠️ [GeoJSON 매칭 실패] {name} (정제명: {clean_feature_name}) -> rows에 존재하지 않거나 매칭 오류")
             feature["properties"]["elderly"] = 0
@@ -286,13 +379,13 @@ def build_html(rows, geojson_data, search_radius_m):
             feature["properties"]["risk_score"] = 0.0
             feature["properties"]["risk_rank"] = -1
             feature["properties"]["label"] = "분석 제외 구역"
-            feature["properties"]["color"] = "#2e7d32" # 회색 대신 기본 초록색(저위험군) 부여
+            feature["properties"]["color"] = "#2e7d32" 
             feature["properties"]["center_lat"] = 0.0
             feature["properties"]["center_lng"] = 0.0
             feature["properties"]["dist_fire"] = 0.0
             feature["properties"]["dist_hosp"] = 0.0
             feature["properties"]["is_chungju"] = False
-        features_to_keep.append(feature)
+            features_to_keep.append(feature)
 
     # 매칭된 충주시 피처들만 포함하는 GeoJSON
     filtered_geojson = {
