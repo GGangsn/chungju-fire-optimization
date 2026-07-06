@@ -189,26 +189,31 @@ def add_cluster_and_risk(rows, cluster_count=3):
     fire_scaled = minmax([row["dist_fire"] for row in rows])
     hosp_scaled = minmax([row["dist_hosp"] for row in rows])
 
+    features = []
     for row, e_score, r_score, f_score, h_score in zip(rows, elderly_scaled, ratio_scaled, fire_scaled, hosp_scaled):
-        # 최종 위험도 점수 = (고령자수 점수 + 고령비율 점수 + 소방서 최단거리 점수 + 병원 최단거리 점수) / 4
-        # 인프라 거리가 멀수록(MinMax 환산값이 클수록) 골든타임 사각지대이므로 점수가 커집니다.
+        # 4차원 피처 저장
+        row["features"] = [e_score, r_score, f_score, h_score]
+        # 위험도 점수 = (고령자수 점수 + 고령비율 점수 + 소방서 최단거리 점수 + 병원 최단거리 점수) / 4
         row["risk_score"] = (e_score + r_score + f_score + h_score) / 4
+        features.append(row["features"])
 
-    # 위험도 점수 기준 내림차순 정렬
-    sorted_rows = sorted(rows, key=lambda x: x["risk_score"], reverse=True)
-    
-    # 25개 구역을 정확히 3등분 (상위 9개: 고위험, 중위 8개: 중위험, 하위 8개: 저위험)
-    for i, row in enumerate(sorted_rows):
-        if i < 9:
-            row["risk_rank"] = 0
-            row["cluster"] = 0
-        elif i < 17:
-            row["risk_rank"] = 1
-            row["cluster"] = 1
-        else:
-            row["risk_rank"] = 2
-            row["cluster"] = 2
-    return sorted_rows
+    # K-Means 군집화 (K=3)
+    labels = kmeans(standardize(features), cluster_count)
+    for row, label in zip(rows, labels):
+        row["cluster"] = label
+
+    # 각 군집별 평균 위험점수 산출
+    cluster_scores = {}
+    for label in sorted(set(labels)):
+        members = [row for row in rows if row["cluster"] == label]
+        cluster_scores[label] = sum(row["risk_score"] for row in members) / len(members)
+
+    # 평균 위험점수가 높은 순으로 정렬하여 랭크 부여
+    sorted_clusters = sorted(cluster_scores, key=cluster_scores.get, reverse=True)
+    rank_by_cluster = {cluster: rank for rank, cluster in enumerate(sorted_clusters)}
+    for row in rows:
+        row["risk_rank"] = rank_by_cluster[row["cluster"]]
+    return rows
 
 
 def risk_label(rank):
@@ -256,7 +261,7 @@ def build_html(rows, geojson_data, search_radius_m):
     # rows 데이터를 정제된 이름을 기준으로 딕셔너리 변환
     rows_by_clean_name = {clean_name(row["name"]): row for row in rows}
 
-    # GeoJSON 피처들에 위험 분석 정보 추가
+    # GeoJSON 피처들에 위험 분석 정보 추가 (읍면 지역은 회색 배경 처리)
     features_to_keep = []
     for feature in geojson_data.get("features", []):
         name = feature["properties"]["name"]
@@ -273,7 +278,20 @@ def build_html(rows, geojson_data, search_radius_m):
             feature["properties"]["center_lng"] = row["lng"]
             feature["properties"]["dist_fire"] = row["dist_fire"]
             feature["properties"]["dist_hosp"] = row["dist_hosp"]
-            features_to_keep.append(feature)
+            feature["properties"]["is_dong"] = True
+        else:
+            feature["properties"]["elderly"] = 0
+            feature["properties"]["elderly_ratio"] = 0.0
+            feature["properties"]["risk_score"] = 0.0
+            feature["properties"]["risk_rank"] = -1
+            feature["properties"]["label"] = "분석 제외 (읍·면 지역)"
+            feature["properties"]["color"] = "#e0e0e0" # 연한 회색 배경
+            feature["properties"]["center_lat"] = 0.0
+            feature["properties"]["center_lng"] = 0.0
+            feature["properties"]["dist_fire"] = 0.0
+            feature["properties"]["dist_hosp"] = 0.0
+            feature["properties"]["is_dong"] = False
+        features_to_keep.append(feature)
 
     # 매칭된 충주시 피처들만 포함하는 GeoJSON
     filtered_geojson = {
@@ -366,16 +384,31 @@ def build_html(rows, geojson_data, search_radius_m):
     // GeoJSON 레이어 생성 및 초기 반투명 스타일 지정
     geojsonLayer = L.geoJSON(geojsonData, {{
       style: function(feature) {{
+        const props = feature.properties;
+        if (!props.is_dong) {{
+          return {{
+            fillColor: "#e0e0e0",
+            fillOpacity: 0.15,
+            color: "#cccccc",
+            weight: 1.0,
+            opacity: 0.3
+          }};
+        }}
         return {{
-          fillColor: feature.properties.color,
-          fillOpacity: 0.22, // 반투명 설정
-          color: feature.properties.color,
+          fillColor: props.color,
+          fillOpacity: 0.22,
+          color: props.color,
           weight: 1.5,
           opacity: 0.45
         }};
       }},
       onEachFeature: function(feature, layer) {{
         const props = feature.properties;
+        if (!props.is_dong) {{
+          layer.bindTooltip(`<b>${{props.name}}</b> (분석 제외 - 읍·면 지역)`, {{ sticky: true }});
+          return;
+        }}
+        
         layer.bindTooltip(
           `<b>${{props.name}}</b> (${{props.label}})<br>` +
           `• 65세 이상 인구: ${{props.elderly.toLocaleString()}}명 (${{props.elderly_ratio.toFixed(1)}}%)<br>` +
@@ -499,30 +532,41 @@ def build_html(rows, geojson_data, search_radius_m):
 
       // 모든 폴리곤의 스타일을 원래의 반투명 상태로 복구
       geojsonLayer.eachLayer((layer) => {{
-        const color = layer.feature.properties.color;
-        layer.setStyle({{
-          fillColor: color,
-          fillOpacity: 0.22,
-          color: color,
-          weight: 1.5,
-          opacity: 0.45
-        }});
+        const props = layer.feature.properties;
+        if (!props.is_dong) {{
+          layer.setStyle({{
+            fillColor: "#e0e0e0",
+            fillOpacity: 0.15,
+            color: "#cccccc",
+            weight: 1.0,
+            opacity: 0.3
+          }});
+        }} else {{
+          const color = props.color;
+          layer.setStyle({{
+            fillColor: color,
+            fillOpacity: 0.22,
+            color: color,
+            weight: 1.5,
+            opacity: 0.45
+          }});
+        }}
       }});
     }}
 
     function onMapClick(e) {{
-      // Turf.js를 사용하여 클릭 지점이 충주시 관내(25개 행정구역 폴리곤) 내부에 위치하는지 검사
+      // Turf.js를 사용하여 클릭 지점이 충주시 도심 '동(洞)' 지역 내부에 위치하는지 검사
       const clickPoint = turf.point([e.latlng.lng, e.latlng.lat]);
-      let isInsideChungju = false;
+      let isInsideDong = false;
       
       geojsonData.features.forEach((feature) => {{
-        if (turf.booleanPointInPolygon(clickPoint, feature)) {{
-          isInsideChungju = true;
+        if (feature.properties.is_dong && turf.booleanPointInPolygon(clickPoint, feature)) {{
+          isInsideDong = true;
         }}
       }});
       
-      if (!isInsideChungju) {{
-        alert("🚨 가상 119안전센터는 충주시 관내(행정구역 안)에만 설립할 수 있습니다!");
+      if (!isInsideDong) {{
+        alert("🚨 가상 119안전센터는 분석 대상인 충주 도심 '동(洞)' 지역 내에만 설립할 수 있습니다!");
         return;
       }}
 
@@ -554,6 +598,19 @@ def build_html(rows, geojson_data, search_radius_m):
       // 실시간으로 각 행정구역 폴리곤 스타일 변경
       geojsonLayer.eachLayer((layer) => {{
         const props = layer.feature.properties;
+        
+        // 읍면 지역은 시뮬레이션 영향에서 완전히 제외하여 회색 배경 상시 유지
+        if (!props.is_dong) {{
+          layer.setStyle({{
+            fillColor: "#e0e0e0",
+            fillOpacity: 0.15,
+            color: "#cccccc",
+            weight: 1.0,
+            opacity: 0.3
+          }});
+          return;
+        }}
+
         const centerLatLng = L.latLng(props.center_lat, props.center_lng);
         
         // 1. 핀이 이 폴리곤 내부에 직접 찍혔는지 체크 (본진 구역)
@@ -651,6 +708,9 @@ def main():
     # 1. 인구 통계 데이터 로드 및 전처리
     raw_rows = read_csv_rows(csv_path)
     rows = prepare_rows(raw_rows)
+
+    # [요청 반영] 읍·면을 제외하고 오직 '동' 단위(도심동)들만 분석 대상으로 한정
+    rows = [row for row in rows if row["name"].endswith("동")]
 
     # 2. K-Means 알고리즘 및 위험 지수 평가 적용
     rows = add_cluster_and_risk(rows, args.clusters)
