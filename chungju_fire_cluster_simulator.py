@@ -350,9 +350,9 @@ def build_html(rows, geojson_data, search_radius_m):
           }}
         }}).addTo(map);
       }}
-    }} catch (e) {
+    }} catch (e) {{
       console.error("Turf union failed:", e);
-    }
+    }}
 
     // 각 지역 중심점에 원형 마커 표시 (중심 좌표 시각화)
     markers.forEach((area) => {{
