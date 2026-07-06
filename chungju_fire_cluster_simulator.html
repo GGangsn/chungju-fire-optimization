@@ -246,13 +246,24 @@
       geojsonLayer.eachLayer((layer) => {
         const props = layer.feature.properties;
         const centerLatLng = L.latLng(props.center_lat, props.center_lng);
-        const distance = e.latlng.distanceTo(centerLatLng);
+        
+        // 1. 핀이 이 폴리곤 내부에 직접 찍혔는지 체크 (본진 구역)
+        const isTarget = turf.booleanPointInPolygon(clickPoint, layer.feature);
+        
+        // 2. 거리 계산
+        let distance = e.latlng.distanceTo(centerLatLng);
+        
+        // 3. 본진 구역인 경우 거리를 0으로 처리하여 무조건 최고의 안전 혜택을 받도록 함
+        if (isTarget) {
+          distance = 0;
+        }
 
         // 가상 안전센터와의 거리에 따른 새로운 등급 색상 적용
         const newColor = getSafetyColor(props.risk_rank, distance);
         const isAlleviated = (props.risk_rank === 0 && newColor !== "#d32f2f") || (props.risk_rank === 1 && newColor === "#2e7d32");
 
-        if (distance <= searchRadiusMeters) {
+        // 본진 구역이거나, 2km 이내 대응 구역인 경우에만 켜짐
+        if (isTarget || distance <= searchRadiusMeters) {
           // 반경 내 지역: 고채도 강조 렌더링
           layer.setStyle({
             fillColor: newColor,
@@ -270,7 +281,7 @@
             alleviatedList.push(`${props.name}`);
           }
         } else {
-          // 반경 외 지역: 색상을 완전히 보이지 않게 처리 (핀 영역만 돋보이게 함)
+          // 반경 외 지역: 색상을 완전히 보이지 않게 처리
           layer.setStyle({
             fillOpacity: 0.0,
             opacity: 0.0,
