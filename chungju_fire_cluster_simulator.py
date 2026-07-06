@@ -258,10 +258,11 @@ def build_html(rows, geojson_data, search_radius_m):
   <title>충주 고령자 소방 위험 군집 시뮬레이터</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <style>
-    html, body, #map {{ width: 100%; height: 100%; margin: 0; }}
-    body {{ font-family: "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif; }}
-    .legend {{
+    html, body, #map { width: 100%; height: 100%; margin: 0; }
+    body { font-family: "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif; }
+    .legend {
       position: fixed;
       left: 18px;
       bottom: 18px;
@@ -273,10 +274,10 @@ def build_html(rows, geojson_data, search_radius_m):
       line-height: 1.6;
       font-size: 13px;
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
-    }}
-    .legend b {{ display: block; margin-bottom: 6px; font-size: 14px; }}
-    .dot {{ display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }}
-    .info-box {{ margin-top: 8px; font-size: 11px; color: #616161; border-top: 1px solid #e0e0e0; padding-top: 6px; }}
+    }
+    .legend b { display: block; margin-bottom: 6px; font-size: 14px; }
+    .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+    .info-box { margin-top: 8px; font-size: 11px; color: #616161; border-top: 1px solid #e0e0e0; padding-top: 6px; }
   </style>
 </head>
 <body>
@@ -332,6 +333,26 @@ def build_html(rows, geojson_data, search_radius_m):
         );
       }}
     }}).addTo(map);
+
+    // Turf.js를 사용하여 충주시 전체 외곽 경계를 검은색으로 강조
+    try {{
+      const unioned = geojsonData.features.reduce((prev, curr) => {{
+        return turf.union(prev, curr);
+      }});
+      if (unioned) {{
+        L.geoJSON(unioned, {{
+          style: {{
+            color: "#1e1e1e",      // 충주시 외곽 경계선 (검은색)
+            weight: 3.5,           // 경계선 굵기
+            opacity: 0.95,         // 선명하게
+            fill: false,           // 읍면동 색상 유지를 위해 내부 채우기 없음
+            interactive: false
+          }}
+        }}).addTo(map);
+      }}
+    }} catch (e) {
+      console.error("Turf union failed:", e);
+    }
 
     // 각 지역 중심점에 원형 마커 표시 (중심 좌표 시각화)
     markers.forEach((area) => {{
