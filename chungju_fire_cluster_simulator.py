@@ -260,9 +260,9 @@ def build_html(rows, geojson_data, search_radius_m):
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <style>
-    html, body, #map { width: 100%; height: 100%; margin: 0; }
-    body { font-family: "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif; }
-    .legend {
+    html, body, #map {{ width: 100%; height: 100%; margin: 0; }}
+    body {{ font-family: "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif; }}
+    .legend {{
       position: fixed;
       left: 18px;
       bottom: 18px;
@@ -274,10 +274,10 @@ def build_html(rows, geojson_data, search_radius_m):
       line-height: 1.6;
       font-size: 13px;
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
-    }
-    .legend b { display: block; margin-bottom: 6px; font-size: 14px; }
-    .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-    .info-box { margin-top: 8px; font-size: 11px; color: #616161; border-top: 1px solid #e0e0e0; padding-top: 6px; }
+    }}
+    .legend b {{ display: block; margin-bottom: 6px; font-size: 14px; }}
+    .dot {{ display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }}
+    .info-box {{ margin-top: 8px; font-size: 11px; color: #616161; border-top: 1px solid #e0e0e0; padding-top: 6px; }}
   </style>
 </head>
 <body>
