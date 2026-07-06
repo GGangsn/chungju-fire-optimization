@@ -280,12 +280,13 @@ def build_html(rows, geojson_data, search_radius_m):
             feature["properties"]["dist_hosp"] = row["dist_hosp"]
             feature["properties"]["is_chungju"] = True
         else:
+            print(f"⚠️ [GeoJSON 매칭 실패] {name} (정제명: {clean_feature_name}) -> rows에 존재하지 않거나 매칭 오류")
             feature["properties"]["elderly"] = 0
             feature["properties"]["elderly_ratio"] = 0.0
             feature["properties"]["risk_score"] = 0.0
             feature["properties"]["risk_rank"] = -1
             feature["properties"]["label"] = "분석 제외 구역"
-            feature["properties"]["color"] = "#e0e0e0" 
+            feature["properties"]["color"] = "#2e7d32" # 회색 대신 기본 초록색(저위험군) 부여
             feature["properties"]["center_lat"] = 0.0
             feature["properties"]["center_lng"] = 0.0
             feature["properties"]["dist_fire"] = 0.0
@@ -387,9 +388,9 @@ def build_html(rows, geojson_data, search_radius_m):
         const props = feature.properties;
         if (!props.is_chungju) {{
           return {{
-            fillColor: "#e0e0e0",
+            fillColor: "#2e7d32",
             fillOpacity: 0.15,
-            color: "#cccccc",
+            color: "#2e7d32",
             weight: 1.0,
             opacity: 0.3
           }};
@@ -535,9 +536,9 @@ def build_html(rows, geojson_data, search_radius_m):
         const props = layer.feature.properties;
         if (!props.is_chungju) {{
           layer.setStyle({{
-            fillColor: "#e0e0e0",
+            fillColor: "#2e7d32",
             fillOpacity: 0.15,
-            color: "#cccccc",
+            color: "#2e7d32",
             weight: 1.0,
             opacity: 0.3
           }});
@@ -602,9 +603,9 @@ def build_html(rows, geojson_data, search_radius_m):
         // 매칭되지 않은 임의의 지역은 시뮬레이션 영향에서 제외
         if (!props.is_chungju) {{
           layer.setStyle({{
-            fillColor: "#e0e0e0",
+            fillColor: "#2e7d32",
             fillOpacity: 0.15,
-            color: "#cccccc",
+            color: "#2e7d32",
             weight: 1.0,
             opacity: 0.3
           }});
