@@ -296,8 +296,9 @@ def build_html(rows, geojson_data, search_radius_m):
     <span class="dot" style="background:#d32f2f"></span>고위험군 (반투명)<br>
     <span class="dot" style="background:#f9a825"></span>중위험군 (반투명)<br>
     <span class="dot" style="background:#2e7d32"></span>저위험군 (반투명)<br>
+    <span style="font-size:14px; vertical-align:middle; margin-right:4px;">🚒</span>실제 소방서 &nbsp; <span style="font-size:14px; vertical-align:middle; margin-right:4px;">🏥</span>실제 종합병원<br>
     <div class="info-box">
-      • 지도 클릭: <b>가상 소방안전센터</b> 핀 설치<br>
+      • 지도/폴리곤 클릭: <b>가상 소방안전센터</b> 핀 설치<br>
       • 설치 시 주변 위험 등급 실시간 완화(안전성 시뮬레이션)<br>
       • 더블클릭/빈곳 재클릭: 필터 초기화
     </div>
@@ -334,13 +335,12 @@ def build_html(rows, geojson_data, search_radius_m):
         layer.bindTooltip(`<b>${{feature.properties.name}}</b> (${{feature.properties.label}})`, {{
           sticky: true
         }});
-        layer.bindPopup(
-          `<b>${{feature.properties.name}}</b><br>` +
-          `등급: ${{feature.properties.label}}<br>` +
-          `65세 이상: ${{feature.properties.elderly.toLocaleString()}}명<br>` +
-          `고령인구 비율: ${{feature.properties.elderly_ratio.toFixed(1)}}%<br>` +
-          `위험점수: ${{feature.properties.risk_score.toFixed(3)}}`
-        );
+        
+        // 폴리곤 클릭 시 가상 119 안전센터 핀을 올바르게 설치하도록 맵 이벤트와 연동
+        layer.on("click", function(e) {{
+          onMapClick(e);
+          L.DomEvent.stopPropagation(e); // 이벤트가 버블링되어 맵에 이중으로 찍히지 않도록 방지
+        }});
       }}
     }}).addTo(map);
 
@@ -363,6 +363,46 @@ def build_html(rows, geojson_data, search_radius_m):
     }} catch (e) {{
       console.error("Turf union failed:", e);
     }}
+
+    // 🚑 실제 소방서 및 병원 마커 추가
+    const fireStationIcon = L.divIcon({{
+      html: '<div style="background-color: #d32f2f; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2.2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35); font-weight: bold; cursor: pointer;">🚒</div>',
+      className: 'custom-div-icon',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    }});
+
+    const hospitalIcon = L.divIcon({{
+      html: '<div style="background-color: #1976d2; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2.2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.35); font-weight: bold; cursor: pointer;">🏥</div>',
+      className: 'custom-div-icon',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    }});
+
+    const realFireStations = [
+      {{ name: "충주소방서", lat: 36.9818, lng: 127.9333, desc: "충주시 소방 총괄 본부" }},
+      {{ name: "주덕119안전센터", lat: 36.9739, lng: 127.8015, desc: "주덕읍 및 인근 면 지역 대응" }},
+      {{ name: "수안보119안전센터", lat: 36.8407, lng: 127.9944, desc: "수안보 및 충주 남부 산간 대응" }},
+      {{ name: "앙성119안전센터", lat: 37.1471, lng: 127.7656, desc: "앙성면 및 북서부 외곽 대응" }},
+      {{ name: "연수119안전센터", lat: 36.9892, lng: 127.9392, desc: "도심 고인구 밀집 구역 대응" }},
+      {{ name: "중앙탑119안전센터", lat: 37.0163, lng: 127.8631, desc: "중앙탑면 및 서부 기업도시 대응" }}
+    ];
+
+    const realHospitals = [
+      {{ name: "건국대학교 충주병원", lat: 36.9767, lng: 127.9272, desc: "종합병원 (응급의료기관)" }},
+      {{ name: "충청북도 충주의료원", lat: 36.9634, lng: 127.9620, desc: "지역 거점 공공병원" }},
+      {{ name: "세명대학교 한방병원", lat: 36.9678, lng: 127.9295, desc: "한방 특화 병원" }}
+    ];
+
+    realFireStations.forEach((st) => {{
+      L.marker([st.lat, st.lng], {{ icon: fireStationIcon }}).addTo(map)
+        .bindPopup(`<b>🔥 ${{st.name}}</b><br>${{st.desc}}`);
+    }});
+
+    realHospitals.forEach((hp) => {{
+      L.marker([hp.lat, hp.lng], {{ icon: hospitalIcon }}).addTo(map)
+        .bindPopup(`<b>🏥 ${{hp.name}}</b><br>${{hp.desc}}`);
+    }});
 
     // 각 지역 중심점에 원형 마커 표시 (중심 좌표 시각화)
     markers.forEach((area) => {{
