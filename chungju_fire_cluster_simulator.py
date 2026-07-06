@@ -570,19 +570,12 @@ def build_html(rows, geojson_data, search_radius_m):
             alleviatedList.push(`${{props.name}}`);
           }}
         }} else {{
-          // 반경 외 지역: 2~4km 범위면 색상 변경은 반영하되 약간 반투명하게, 4km 초과는 거의 투명하게 처리
-          const isSubSafe = distance <= 4000;
+          // 반경 외 지역: 색상을 완전히 보이지 않게 처리 (핀 영역만 돋보이게 함)
           layer.setStyle({{
-            fillColor: newColor,
-            fillOpacity: isSubSafe ? 0.20 : 0.04,
-            color: newColor,
-            weight: isSubSafe ? 1.5 : 0.6,
-            opacity: isSubSafe ? 0.4 : 0.12
+            fillOpacity: 0.0,
+            opacity: 0.0,
+            weight: 0.0
           }});
-          
-          if (isSubSafe && isAlleviated) {{
-            alleviatedList.push(`${{props.name}}`);
-          }}
         }}
       }});
 
